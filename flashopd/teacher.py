@@ -195,6 +195,13 @@ class APITeacher(TeacherBackend):
                 b_ids.append(t_ids)
                 b_lps.append(t_lps)
 
+            pad_entry_ids, pad_entry_lps = [0] * K, [-100.0] * K
+            while len(b_ids) < rollout_len:
+                b_ids.append(pad_entry_ids)
+                b_lps.append(pad_entry_lps)
+            b_ids = b_ids[:rollout_len]
+            b_lps = b_lps[:rollout_len]
+
             all_ids.append(b_ids)
             all_lps.append(b_lps)
 
