@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flashopd"
+version = "0.1.0"
+description = "300行核心代码实现 On-Policy Distillation for LLMs"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.1.0",
+    "transformers>=4.40.0",
+    "datasets>=2.18.0",
+    "pyyaml>=6.0",
+    "accelerate>=0.27.0",
+]
+
+[project.optional-dependencies]
+lora = ["peft>=0.10.0"]
+api = ["requests>=2.31.0"]
+deepspeed = ["deepspeed>=0.14.0"]
+all = ["peft>=0.10.0", "requests>=2.31.0", "deepspeed>=0.14.0"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+flashopd = "flashopd.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["flashopd*"]

@@ -1,0 +1,38 @@
+# FlashOPD 配置：使用远程 vLLM API 作为 Teacher
+# 适合 teacher 模型很大（如 70B+），无法与 student 同机部署的场景
+
+student_model: "Qwen/Qwen2.5-1.5B-Instruct"
+
+# Teacher 使用 API 模式
+teacher_backend: "api"
+teacher_api_url: "http://10.0.0.1:8000"
+teacher_api_model: "Qwen3-235B-A22B"
+teacher_api_logprobs: 20   # vLLM 默认上限 20，需 --max-logprobs N 提高
+
+# Loss 配置
+ce_coef: 1.0
+kl_coef: 0.1
+loss_balance: "fixed"
+kl_type: "reverse"
+temperature: 1.0
+kl_clip_max: 2.0
+
+# Rollout
+max_new_tokens: 256
+rollout_top_k: 50
+rollout_top_p: 0.95
+rollout_temperature: 0.8
+
+# 训练
+learning_rate: 2.0e-5
+num_epochs: 3
+per_device_batch_size: 2
+gradient_accumulation_steps: 8
+bf16: true
+max_seq_length: 4096
+
+use_lora: true
+lora_r: 64
+
+output_dir: "./output/api_teacher_run"
+data_path: "your_data.jsonl"

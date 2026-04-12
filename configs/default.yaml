@@ -1,0 +1,62 @@
+# FlashOPD 默认配置
+# 一份 YAML 搞定所有蒸馏超参
+
+# ========== 模型 ==========
+student_model: "Qwen/Qwen2.5-1.5B-Instruct"
+teacher_model: "Qwen/Qwen2.5-7B-Instruct"
+
+# ========== Loss 配置 ==========
+ce_coef: 1.0          # CE loss 权重
+kl_coef: 0.1          # KL loss 权重
+loss_balance: "fixed"  # fixed | dynamic
+ema_decay: 0.99
+
+# ========== KL 散度 ==========
+kl_type: "reverse"    # reverse | forward | jsd
+temperature: 1.0
+kl_clip_min: 0.0      # 0 = 不截断
+kl_clip_max: 2.0
+kl_top_k: 0           # 0 = 全词表
+
+# ========== Rollout ==========
+max_new_tokens: 512
+rollout_top_k: 0       # 0 = greedy
+rollout_top_p: 1.0
+rollout_temperature: 1.0
+
+# ========== 调度 ==========
+disable_after_ratio: 1.0  # 1.0 = 全程 OPD
+
+# ========== Teacher Backend ==========
+teacher_backend: "local"  # local | api
+# teacher_api_url: "http://10.0.0.1:8000"
+# teacher_api_model: "default"
+# teacher_api_logprobs: 20   # vLLM 默认上限 20，需 --max-logprobs N 提高
+
+# ========== 训练 ==========
+learning_rate: 5.0e-6
+num_epochs: 3
+per_device_batch_size: 1
+gradient_accumulation_steps: 4
+warmup_ratio: 0.05
+lr_scheduler: "cosine"
+weight_decay: 0.05
+bf16: true
+max_seq_length: 4096
+# deepspeed: "./ds_config_zero2.json"
+
+# ========== LoRA ==========
+use_lora: true
+lora_r: 64
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target_modules: "q_proj,v_proj,k_proj,o_proj,gate_proj,up_proj,down_proj"
+
+# ========== 输出 ==========
+output_dir: "./output/flashopd_run"
+save_steps: 500
+logging_steps: 10
+save_total_limit: 3
+
+# ========== 数据 ==========
+data_path: "your_data.jsonl"
