@@ -35,22 +35,78 @@ def _apply_lora(model, cfg: OPDConfig):
     return model
 
 
+def _build_prompt(instruction: str, input_text: str = "") -> str:
+    """将 instruction + input 组装成 prompt 文本."""
+    if input_text:
+        return f"{instruction}\n{input_text}"
+    return instruction
+
+
 def _load_data(cfg: OPDConfig, tokenizer):
-    if cfg.data_path.endswith(".jsonl") or cfg.data_path.endswith(".json"):
+    """加载并 tokenize 数据.
+
+    支持两种数据格式：
+      1. SFT 格式: {"instruction": "...", "input": "...", "output": "..."}
+      2. 纯文本: {"text": "..."}（不区分 prompt/response，仅用于纯 CE 训练）
+
+    SFT 格式会生成 labels，prompt 部分标记为 -100（不计算 CE loss），
+    同时记录 prompt_length 供 OPD rollout 使用。
+    """
+    if cfg.data_path.endswith((".jsonl", ".json")):
         ds = load_dataset("json", data_files=cfg.data_path, split="train")
     else:
         ds = load_dataset(cfg.data_path, split="train")
 
-    def tokenize(examples):
-        text_col = "text" if "text" in examples else list(examples.keys())[0]
-        return tokenizer(
-            examples[text_col],
+    is_sft = "instruction" in ds.column_names and "output" in ds.column_names
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    IGNORE_INDEX = -100
+
+    def tokenize_sft(example):
+        prompt = _build_prompt(example["instruction"], example.get("input", ""))
+        response = example["output"]
+
+        prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
+        response_ids = tokenizer(response, add_special_tokens=False)["input_ids"]
+        if tokenizer.eos_token_id is not None:
+            response_ids = response_ids + [tokenizer.eos_token_id]
+
+        full_ids = prompt_ids + response_ids
+        prompt_len = len(prompt_ids)
+
+        if len(full_ids) > cfg.max_seq_length:
+            full_ids = full_ids[: cfg.max_seq_length]
+            prompt_len = min(prompt_len, cfg.max_seq_length)
+
+        labels = [IGNORE_INDEX] * prompt_len + full_ids[prompt_len:]
+        attn_mask = [1] * len(full_ids)
+
+        pad_len = cfg.max_seq_length - len(full_ids)
+        if pad_len > 0:
+            full_ids = full_ids + [pad_id] * pad_len
+            labels = labels + [IGNORE_INDEX] * pad_len
+            attn_mask = attn_mask + [0] * pad_len
+
+        return {
+            "input_ids": full_ids,
+            "attention_mask": attn_mask,
+            "labels": labels,
+            "prompt_length": prompt_len,
+        }
+
+    def tokenize_text(example):
+        text_col = "text" if "text" in example else list(example.keys())[0]
+        enc = tokenizer(
+            example[text_col],
             truncation=True,
             max_length=cfg.max_seq_length,
             padding="max_length",
         )
+        enc["labels"] = enc["input_ids"].copy()
+        enc["prompt_length"] = 0
+        return enc
 
-    ds = ds.map(tokenize, batched=True, remove_columns=ds.column_names)
+    tokenize_fn = tokenize_sft if is_sft else tokenize_text
+    ds = ds.map(tokenize_fn, remove_columns=ds.column_names)
     ds.set_format("torch")
     return ds
 

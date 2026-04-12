@@ -59,4 +59,4 @@ logging_steps: 10
 save_total_limit: 3
 
 # ========== 数据 ==========
-data_path: "your_data.jsonl"
+data_path: "data/demo.jsonl"

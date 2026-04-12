@@ -37,13 +37,9 @@ FlashOPD 融合了五个顶级代码库的设计精华：
 ### 安装（< 30 秒）
 
 ```bash
-# 从源码安装（推荐）
-git clone https://github.com/your-org/flashopd.git && cd flashopd
+git clone https://github.com/china10s/flashopd.git && cd flashopd
 pip install -e .               # 开发模式，改代码立即生效
 pip install -e ".[all]"        # 全量安装（含 LoRA + DeepSpeed + API）
-
-# 发布到 PyPI 后可直接（TODO）
-# pip install flashopd
 ```
 
 ### 20 行代码启动蒸馏

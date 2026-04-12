@@ -58,11 +58,40 @@ class OPDTrainer(Trainer):
         progress = self.state.global_step / self.state.max_steps
         return progress < self.opd_cfg.disable_after_ratio
 
+    def _extract_prompt(self, inputs):
+        """从 batch 中提取 prompt 部分的 input_ids 和 attention_mask.
+
+        如果数据集提供了 prompt_length，只取 prompt 部分；
+        否则回退到使用完整 input_ids（兼容纯 text 格式）。
+        """
+        input_ids = inputs["input_ids"]
+        attention_mask = inputs.get("attention_mask")
+        prompt_lengths = inputs.get("prompt_length")
+
+        if prompt_lengths is None or (prompt_lengths == 0).all():
+            return input_ids, attention_mask
+
+        max_plen = int(prompt_lengths.max().item())
+        if max_plen <= 0:
+            return input_ids, attention_mask
+
+        prompt_ids = input_ids[:, :max_plen]
+        prompt_mask = attention_mask[:, :max_plen] if attention_mask is not None else None
+        return prompt_ids, prompt_mask
+
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """Override: 在 CE 基础上注入 OPD KL loss."""
+        """Override: 在 CE 基础上注入 OPD KL loss.
+
+        数据流：
+          1. CE loss: 在完整序列 (prompt + ground-truth response) 上计算，
+             prompt 部分 labels=-100 不参与 loss。
+          2. OPD: student 拿 prompt 做 rollout 生成 on-policy response，
+             teacher 对 prompt + rollout 序列打分，计算 KL loss。
+        """
         t0 = time.perf_counter()
 
-        outputs = model(**inputs)
+        ce_inputs = {k: v for k, v in inputs.items() if k != "prompt_length"}
+        outputs = model(**ce_inputs)
         ce_loss = outputs.loss
 
         if not self.opd_active:
@@ -73,17 +102,17 @@ class OPDTrainer(Trainer):
         tokenizer = self.tokenizer
 
         input_ids = inputs.get("input_ids")
-        attention_mask = inputs.get("attention_mask")
         if input_ids is None:
             self._opd_stats = {"opd/active": 1.0, "opd/ce_loss": ce_loss.item(), "opd/kl_loss": 0.0}
             return (ce_loss, outputs) if return_outputs else ce_loss
 
-        # ---- Step 1: Student Rollout ----
+        # ---- Step 1: Student Rollout (从 prompt 开始生成) ----
         t_rollout = time.perf_counter()
+        prompt_ids, prompt_mask = self._extract_prompt(inputs)
         gen_ids = student_rollout(
             model=model,
-            input_ids=input_ids,
-            attention_mask=attention_mask,
+            input_ids=prompt_ids,
+            attention_mask=prompt_mask,
             max_new_tokens=cfg.max_new_tokens,
             top_k=cfg.rollout_top_k,
             top_p=cfg.rollout_top_p,
@@ -98,7 +127,7 @@ class OPDTrainer(Trainer):
             self._opd_stats = {"opd/active": 1.0, "opd/ce_loss": ce_loss.item(), "opd/kl_loss": 0.0}
             return (ce_loss, outputs) if return_outputs else ce_loss
 
-        full_ids = torch.cat([input_ids, gen_ids], dim=1)
+        full_ids = torch.cat([prompt_ids, gen_ids], dim=1)
 
         # ---- Step 2: Teacher Forward ----
         t_teacher = time.perf_counter()
