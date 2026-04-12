@@ -99,7 +99,7 @@ class OPDTrainer(Trainer):
             return (ce_loss, outputs) if return_outputs else ce_loss
 
         cfg = self.opd_cfg
-        tokenizer = self.tokenizer
+        tokenizer = self.processing_class
 
         input_ids = inputs.get("input_ids")
         if input_ids is None:
