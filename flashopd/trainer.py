@@ -87,7 +87,8 @@ class OPDTrainer(Trainer):
         if args.save_steps == defaults.save_steps and cfg.save_steps != defaults.save_steps:
             args.save_steps = cfg.save_steps
 
-        if str(args.eval_strategy) == "no" and cfg.eval_strategy != "no":
+        current_eval = getattr(args.eval_strategy, "value", args.eval_strategy)
+        if current_eval == "no" and cfg.eval_strategy != "no":
             args.eval_strategy = cfg.eval_strategy
             args.eval_steps = cfg.eval_steps if cfg.eval_steps is not None else cfg.logging_steps
 
