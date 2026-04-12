@@ -39,6 +39,10 @@ class OPDTrainer(Trainer):
         teacher: TeacherBackend | None = None,
         **kwargs,
     ):
+        args = kwargs.get("args")
+        if args is not None:
+            self._sync_args_from_config(args, opd_config)
+
         super().__init__(**kwargs)
         self.opd_cfg = opd_config
         self.teacher = teacher
@@ -53,6 +57,23 @@ class OPDTrainer(Trainer):
         self._step_times: Dict[str, float] = {}
 
         self.add_callback(_OPDProgressCallback(self))
+
+    @staticmethod
+    def _sync_args_from_config(args, cfg: OPDConfig):
+        """Auto-sync OPDConfig fields to TrainingArguments when user only sets OPDConfig."""
+        from transformers import TrainingArguments
+
+        defaults = TrainingArguments(output_dir="__tmp__")
+
+        if args.logging_steps == defaults.logging_steps and cfg.logging_steps != defaults.logging_steps:
+            args.logging_steps = cfg.logging_steps
+
+        if args.save_steps == defaults.save_steps and cfg.save_steps != defaults.save_steps:
+            args.save_steps = cfg.save_steps
+
+        if str(args.eval_strategy) == "no" and cfg.eval_strategy != "no":
+            args.eval_strategy = cfg.eval_strategy
+            args.eval_steps = cfg.eval_steps if cfg.eval_steps is not None else cfg.logging_steps
 
     @property
     def opd_active(self) -> bool:
