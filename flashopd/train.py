@@ -35,14 +35,14 @@ def _apply_lora(model, cfg: OPDConfig):
     return model
 
 
-def _build_prompt(instruction: str, input_text: str = "") -> str:
+def build_prompt(instruction: str, input_text: str = "") -> str:
     """将 instruction + input 组装成 prompt 文本."""
     if input_text:
         return f"{instruction}\n{input_text}"
     return instruction
 
 
-def _load_data(cfg: OPDConfig, tokenizer):
+def prepare_dataset(cfg: OPDConfig, tokenizer):
     """加载并 tokenize 数据.
 
     支持两种数据格式：
@@ -62,7 +62,7 @@ def _load_data(cfg: OPDConfig, tokenizer):
     IGNORE_INDEX = -100
 
     def tokenize_sft(example):
-        prompt = _build_prompt(example["instruction"], example.get("input", ""))
+        prompt = build_prompt(example["instruction"], example.get("input", ""))
         response = example["output"]
 
         prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
@@ -133,7 +133,7 @@ def run_training(cfg: OPDConfig):
     dtype = torch.bfloat16 if cfg.bf16 else torch.float16
     student = AutoModelForCausalLM.from_pretrained(
         cfg.student_model,
-        torch_dtype=dtype,
+        dtype=dtype,
         trust_remote_code=True,
     )
 
@@ -146,7 +146,7 @@ def run_training(cfg: OPDConfig):
         teacher = create_teacher(cfg, student_tokenizer=tokenizer)
 
     # ---- 4. Data ----
-    dataset = _load_data(cfg, tokenizer)
+    dataset = prepare_dataset(cfg, tokenizer)
 
     # ---- 5. Training Args ----
     training_args = TrainingArguments(
@@ -174,7 +174,7 @@ def run_training(cfg: OPDConfig):
         model=student,
         args=training_args,
         train_dataset=dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
 
     # ---- 7. Train ----

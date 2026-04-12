@@ -170,7 +170,7 @@ def create_teacher(
 
     teacher = AutoModelForCausalLM.from_pretrained(
         cfg.teacher_model,
-        torch_dtype=torch.bfloat16 if cfg.bf16 else torch.float16,
+        dtype=torch.bfloat16 if cfg.bf16 else torch.float16,
         device_map="auto",
         trust_remote_code=True,
     )

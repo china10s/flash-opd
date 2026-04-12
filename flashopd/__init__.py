@@ -11,6 +11,7 @@ from flashopd.rollout import student_rollout
 from flashopd.teacher import LocalTeacher, APITeacher, create_teacher
 from flashopd.balancer import LossBalancer
 from flashopd.trainer import OPDTrainer
+from flashopd.train import prepare_dataset, build_prompt
 
 __all__ = [
     "OPDConfig",
@@ -22,4 +23,6 @@ __all__ = [
     "create_teacher",
     "LossBalancer",
     "OPDTrainer",
+    "prepare_dataset",
+    "build_prompt",
 ]

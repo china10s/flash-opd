@@ -5,9 +5,8 @@
 - output → ground-truth response（CE loss 只算这部分）
 - OPD: student rollout → teacher 打分 → KL loss
 """
-from flashopd import OPDConfig, OPDTrainer, create_teacher
+from flashopd import OPDConfig, OPDTrainer, create_teacher, prepare_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments
-from datasets import load_dataset
 
 cfg = OPDConfig(
     student_model="Qwen/Qwen2.5-1.5B-Instruct",
@@ -15,21 +14,23 @@ cfg = OPDConfig(
     kl_type="reverse",
     kl_coef=0.1,
     max_new_tokens=256,
+    data_path="data/demo.jsonl",
 )
 
 tokenizer = AutoTokenizer.from_pretrained(cfg.student_model, trust_remote_code=True)
-student = AutoModelForCausalLM.from_pretrained(cfg.student_model, torch_dtype="auto", trust_remote_code=True)
-teacher = create_teacher(cfg, student_tokenizer=tokenizer)
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
 
-# data/demo.jsonl 格式: {"instruction": "...", "input": "...", "output": "..."}
-dataset = load_dataset("json", data_files="data/demo.jsonl", split="train")
+student = AutoModelForCausalLM.from_pretrained(cfg.student_model, dtype="auto", trust_remote_code=True)
+teacher = create_teacher(cfg, student_tokenizer=tokenizer)
+dataset = prepare_dataset(cfg, tokenizer)  # tokenize + prompt/response 分离
 
 trainer = OPDTrainer(
     opd_config=cfg,
     teacher=teacher,
     model=student,
-    args=TrainingArguments(output_dir="./output", num_train_epochs=1, bf16=True),
+    args=TrainingArguments(output_dir="./output", num_train_epochs=1, bf16=True, remove_unused_columns=False),
     train_dataset=dataset,
-    tokenizer=tokenizer,
+    processing_class=tokenizer,
 )
 trainer.train()
