@@ -43,6 +43,22 @@ class OPDTrainer(Trainer):
         if args is not None:
             self._sync_args_from_config(args, opd_config)
 
+        if kwargs.get("eval_dataset") is None and opd_config.eval_strategy != "no":
+            train_ds = kwargs.get("train_dataset")
+            if train_ds is not None and opd_config.eval_split_ratio > 0:
+                split = train_ds.train_test_split(
+                    test_size=opd_config.eval_split_ratio, seed=42
+                )
+                kwargs["train_dataset"] = split["train"]
+                kwargs["eval_dataset"] = split["test"]
+                rank = int(os.getenv("RANK", "0"))
+                if rank == 0:
+                    print(
+                        f"  [FlashOPD] Auto-split: {len(split['train'])} train"
+                        f" / {len(split['test'])} eval"
+                        f" ({opd_config.eval_split_ratio:.0%})"
+                    )
+
         super().__init__(**kwargs)
         self.opd_cfg = opd_config
         self.teacher = teacher
