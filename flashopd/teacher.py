@@ -62,6 +62,38 @@ class LocalTeacher(TeacherBackend):
         raise NotImplementedError("LocalTeacher 提供完整 logits，不需要 sparse 路径")
 
 
+def _parse_logprob_entry(pos_data, K: int):
+    """Parse one position's logprob data from vLLM API response.
+
+    vLLM returns two possible dict formats:
+      - flat:   {"token_id": logprob_float, ...}
+      - nested: {"token_id": {"logprob": float, "rank": int, ...}, ...}
+    Also handles list-of-dicts format from some API versions.
+    """
+    if isinstance(pos_data, dict):
+        parsed = []
+        for tok_id, val in pos_data.items():
+            if isinstance(val, dict):
+                lp = float(val.get("logprob", -100))
+            else:
+                lp = float(val)
+            parsed.append((int(tok_id), lp))
+        parsed.sort(key=lambda x: x[1], reverse=True)
+        parsed = parsed[:K]
+        t_ids = [p[0] for p in parsed]
+        t_lps = [p[1] for p in parsed]
+    elif isinstance(pos_data, list):
+        items = sorted(pos_data, key=lambda x: x.get("logprob", -100), reverse=True)[:K]
+        t_ids = [int(it.get("token_id", 0)) for it in items]
+        t_lps = [float(it.get("logprob", -100)) for it in items]
+    else:
+        return [0] * K, [-100.0] * K
+
+    t_ids = (t_ids + [0] * K)[:K]
+    t_lps = (t_lps + [-100.0] * K)[:K]
+    return t_ids, t_lps
+
+
 class APITeacher(TeacherBackend):
     """通过 vLLM OpenAI-compatible API 获取 teacher logprobs（适合大模型分离部署）."""
 
@@ -156,21 +188,10 @@ class APITeacher(TeacherBackend):
             for pos in range(start, len(ids)):
                 if pos < len(plp) and plp[pos] is not None:
                     pos_data = plp[pos]
-                    if isinstance(pos_data, dict):
-                        items = sorted(pos_data.items(), key=lambda x: x[1], reverse=True)[:K]
-                        t_ids = [int(k) for k, _ in items]
-                        t_lps = [float(v) for _, v in items]
-                    elif isinstance(pos_data, list):
-                        items = sorted(pos_data, key=lambda x: x.get("logprob", -100), reverse=True)[:K]
-                        t_ids = [int(it.get("token_id", 0)) for it in items]
-                        t_lps = [float(it.get("logprob", -100)) for it in items]
-                    else:
-                        t_ids, t_lps = [0] * K, [-100.0] * K
+                    t_ids, t_lps = _parse_logprob_entry(pos_data, K)
                 else:
                     t_ids, t_lps = [0] * K, [-100.0] * K
 
-                t_ids = (t_ids + [0] * K)[:K]
-                t_lps = (t_lps + [-100.0] * K)[:K]
                 b_ids.append(t_ids)
                 b_lps.append(t_lps)
 

@@ -65,6 +65,12 @@ class OPDConfig:
     logging_steps: int = 10
     save_total_limit: int = 3
 
+    # ---- 评估 ----
+    eval_data_path: str = ""
+    eval_split_ratio: float = 0.05  # eval_data_path 留空时从训练集自动切分的比例
+    eval_strategy: Literal["no", "steps", "epoch"] = "steps"
+    eval_steps: Optional[int] = None  # None = 与 logging_steps 相同
+
     # ---- 数据 ----
     data_path: str = ""
     max_seq_length: int = 4096

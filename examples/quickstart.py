@@ -29,7 +29,10 @@ trainer = OPDTrainer(
     opd_config=cfg,
     teacher=teacher,
     model=student,
-    args=TrainingArguments(output_dir="./output", num_train_epochs=1, bf16=True, remove_unused_columns=False),
+    args=TrainingArguments(
+        output_dir="./output", num_train_epochs=1, bf16=True,
+        logging_steps=1, remove_unused_columns=False,
+    ),
     train_dataset=dataset,
     processing_class=tokenizer,
 )

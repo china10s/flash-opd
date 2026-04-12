@@ -146,10 +146,30 @@ def run_training(cfg: OPDConfig):
         teacher = create_teacher(cfg, student_tokenizer=tokenizer)
 
     # ---- 4. Data ----
-    dataset = prepare_dataset(cfg, tokenizer)
+    eval_dataset = None
+    if cfg.eval_data_path:
+        dataset = prepare_dataset(cfg, tokenizer)
+        eval_cfg = OPDConfig(**{**cfg.__dict__, "data_path": cfg.eval_data_path})
+        eval_dataset = prepare_dataset(eval_cfg, tokenizer)
+    elif cfg.eval_strategy != "no" and cfg.eval_split_ratio > 0:
+        full_dataset = prepare_dataset(cfg, tokenizer)
+        split = full_dataset.train_test_split(
+            test_size=cfg.eval_split_ratio, seed=42
+        )
+        dataset = split["train"]
+        eval_dataset = split["test"]
+        if rank == 0:
+            print(
+                f"  Auto-split: {len(dataset)} train / "
+                f"{len(eval_dataset)} eval "
+                f"({cfg.eval_split_ratio:.0%})"
+            )
+    else:
+        dataset = prepare_dataset(cfg, tokenizer)
 
     # ---- 5. Training Args ----
-    training_args = TrainingArguments(
+    eval_steps = cfg.eval_steps if cfg.eval_steps is not None else cfg.logging_steps
+    training_args_kwargs = dict(
         output_dir=cfg.output_dir,
         num_train_epochs=cfg.num_epochs,
         per_device_train_batch_size=cfg.per_device_batch_size,
@@ -166,6 +186,11 @@ def run_training(cfg: OPDConfig):
         report_to="tensorboard",
         remove_unused_columns=False,
     )
+    if eval_dataset is not None:
+        training_args_kwargs["eval_strategy"] = cfg.eval_strategy
+        training_args_kwargs["eval_steps"] = eval_steps
+
+    training_args = TrainingArguments(**training_args_kwargs)
 
     # ---- 6. Trainer ----
     trainer = OPDTrainer(
@@ -174,6 +199,7 @@ def run_training(cfg: OPDConfig):
         model=student,
         args=training_args,
         train_dataset=dataset,
+        eval_dataset=eval_dataset,
         processing_class=tokenizer,
     )
 
