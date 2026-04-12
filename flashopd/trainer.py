@@ -15,6 +15,11 @@ from flashopd.rollout import student_rollout
 from flashopd.teacher import TeacherBackend
 
 
+def _scalar(t: torch.Tensor) -> torch.Tensor:
+    """确保 loss 是标量（DataParallel 会返回 per-GPU 向量）."""
+    return t.mean() if t.dim() > 0 else t
+
+
 class OPDTrainer(Trainer):
     """On-Policy Distillation Trainer.
 
@@ -92,7 +97,7 @@ class OPDTrainer(Trainer):
 
         ce_inputs = {k: v for k, v in inputs.items() if k != "prompt_length"}
         outputs = model(**ce_inputs)
-        ce_loss = outputs.loss
+        ce_loss = _scalar(outputs.loss)
 
         if not self.opd_active:
             self._opd_stats = {"opd/active": 0.0, "opd/ce_loss": ce_loss.item()}
@@ -166,6 +171,7 @@ class OPDTrainer(Trainer):
                 kl_type=cfg.kl_type, temperature=cfg.temperature, top_k=cfg.kl_top_k,
             )
 
+        kl_loss = _scalar(kl_loss)
         if cfg.kl_has_clip:
             kl_loss = clip_kl(kl_loss, cfg.kl_clip_min, cfg.kl_clip_max)
         self._step_times["kl_ms"] = (time.perf_counter() - t_kl) * 1000
