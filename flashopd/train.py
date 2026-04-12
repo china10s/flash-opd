@@ -53,7 +53,10 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     同时记录 prompt_length 供 OPD rollout 使用。
     """
     if cfg.data_path.endswith((".jsonl", ".json")):
-        ds = load_dataset("json", data_files=cfg.data_path, split="train")
+        ds = load_dataset(
+            "json", data_files=cfg.data_path, split="train",
+            chunksize=10 << 20,  # 10MB chunks, avoids int32 overflow on large files
+        )
     else:
         ds = load_dataset(cfg.data_path, split="train")
 
