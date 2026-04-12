@@ -79,6 +79,37 @@ class APITeacher(TeacherBackend):
         self.timeout = timeout
         self.pad_token_id = pad_token_id
 
+        self._verify_connection()
+
+    def _verify_connection(self):
+        """Fail fast if the API teacher is unreachable."""
+        import requests
+
+        models_url = f"{self.api_url}/v1/models"
+        try:
+            resp = requests.get(models_url, timeout=5)
+            resp.raise_for_status()
+            available = [m["id"] for m in resp.json().get("data", [])]
+            if self.model_name and self.model_name not in available:
+                print(
+                    f"[FlashOPD] WARNING: model '{self.model_name}' not in "
+                    f"API models {available}. Will use as-is."
+                )
+            print(
+                f"[FlashOPD] API teacher connected: {self.api_url} "
+                f"(models: {available})"
+            )
+        except requests.ConnectionError:
+            raise ConnectionError(
+                f"[FlashOPD] Cannot reach teacher API at {self.api_url}. "
+                f"Please check that the vLLM server is running."
+            )
+        except requests.Timeout:
+            raise ConnectionError(
+                f"[FlashOPD] Teacher API at {self.api_url} timed out (5s). "
+                f"Please check network connectivity."
+            )
+
     @property
     def is_api(self) -> bool:
         return True
