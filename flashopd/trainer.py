@@ -216,10 +216,10 @@ class OPDTrainer(Trainer):
 
         return (total_loss, outputs) if return_outputs else total_loss
 
-    def log(self, logs: Dict[str, float]) -> None:
+    def log(self, logs: Dict[str, float], *args, **kwargs) -> None:
         if self._opd_stats:
             logs.update(self._opd_stats)
-        super().log(logs)
+        super().log(logs, *args, **kwargs)
 
 
 class _OPDProgressCallback(TrainerCallback):
