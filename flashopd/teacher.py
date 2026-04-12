@@ -182,7 +182,7 @@ class APITeacher(TeacherBackend):
                 or []
             )
 
-            start = len(ids) - rollout_len
+            start = max(0, len(ids) - rollout_len)
             b_ids, b_lps = [], []
 
             for pos in range(start, len(ids)):
