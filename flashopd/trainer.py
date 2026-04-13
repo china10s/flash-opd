@@ -102,10 +102,10 @@ class OPDTrainer(Trainer):
         return progress < self.opd_cfg.disable_after_ratio
 
     def _extract_prompt(self, inputs):
-        """从 batch 中提取 prompt 部分的 input_ids 和 attention_mask.
+        """从 batch 中提取 prompt 部分，左 padding 对齐以适配 generate().
 
-        如果数据集提供了 prompt_length，只取 prompt 部分；
-        否则回退到使用完整 input_ids（兼容纯 text 格式）。
+        按每个样本的实际 prompt_length 提取，短 prompt 左侧补 pad，
+        保证 batch 内右侧全是真实 token，避免 generate() 右 padding 警告。
         """
         input_ids = inputs["input_ids"]
         attention_mask = inputs.get("attention_mask")
@@ -118,9 +118,20 @@ class OPDTrainer(Trainer):
         if max_plen <= 0:
             return input_ids, attention_mask
 
-        prompt_ids = input_ids[:, :max_plen]
-        prompt_mask = attention_mask[:, :max_plen] if attention_mask is not None else None
-        return prompt_ids, prompt_mask
+        pad_id = self.processing_class.pad_token_id or 0
+        bsz = input_ids.shape[0]
+        device = input_ids.device
+
+        new_ids = torch.full((bsz, max_plen), pad_id, dtype=input_ids.dtype, device=device)
+        new_mask = torch.zeros((bsz, max_plen), dtype=attention_mask.dtype, device=device)
+
+        for i in range(bsz):
+            plen = min(int(prompt_lengths[i].item()), max_plen)
+            if plen > 0:
+                new_ids[i, max_plen - plen :] = input_ids[i, :plen]
+                new_mask[i, max_plen - plen :] = 1
+
+        return new_ids, new_mask
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Override: 在 CE 基础上注入 OPD KL loss.
