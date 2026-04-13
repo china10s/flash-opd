@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import abc
+import os
 from typing import Tuple
 
 import torch
@@ -227,10 +228,18 @@ def create_teacher(
 
     from transformers import AutoModelForCausalLM
 
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+
+    if world_size > 1:
+        device_map = {"": f"cuda:{local_rank}"}
+    else:
+        device_map = "auto"
+
     teacher = AutoModelForCausalLM.from_pretrained(
         cfg.teacher_model,
         dtype=torch.bfloat16 if cfg.bf16 else torch.float16,
-        device_map="auto",
+        device_map=device_map,
         trust_remote_code=True,
     )
     return LocalTeacher(teacher)
