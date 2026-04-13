@@ -43,8 +43,15 @@ def build_prompt(instruction: str, input_text: str = "") -> str:
     return instruction
 
 
-def _load_jsonl(path: str) -> Dataset:
-    """Line-by-line JSONL loader — no PyArrow int32 block_size limit."""
+def _load_json_or_jsonl(path: str) -> Dataset:
+    """Auto-detect JSON (array) vs JSONL (line-delimited) and load safely."""
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        first_char = f.read(1).strip()
+
+    if first_char == "[":
+        data = json.load(open(path, encoding="utf-8", errors="ignore"))
+        return Dataset.from_list(data)
+
     def _gen():
         with open(path, encoding="utf-8", errors="ignore") as f:
             for line in f:
@@ -69,7 +76,7 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     同时记录 prompt_length 供 OPD rollout 使用。
     """
     if cfg.data_path.endswith((".jsonl", ".json")):
-        ds = _load_jsonl(cfg.data_path)
+        ds = _load_json_or_jsonl(cfg.data_path)
     else:
         ds = load_dataset(cfg.data_path, split="train")
 
