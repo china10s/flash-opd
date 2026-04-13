@@ -46,11 +46,15 @@ def build_prompt(instruction: str, input_text: str = "") -> str:
 def _load_jsonl(path: str) -> Dataset:
     """Line-by-line JSONL loader — no PyArrow int32 block_size limit."""
     def _gen():
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="ignore") as f:
             for line in f:
                 line = line.strip()
-                if line:
+                if not line:
+                    continue
+                try:
                     yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
     return Dataset.from_generator(_gen)
 
 
