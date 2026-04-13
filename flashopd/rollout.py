@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from transformers import GenerationConfig
 
 
 def _unwrap_model(model: nn.Module) -> nn.Module:
@@ -53,24 +54,26 @@ def student_rollout(
 
     do_sample = not (top_k == 0 and top_p >= 1.0)
 
-    gen_kwargs = {
-        "input_ids": input_ids,
+    gen_config_kwargs = {
         "max_new_tokens": max_new_tokens,
         "do_sample": do_sample,
     }
+    if do_sample:
+        gen_config_kwargs["temperature"] = temperature
+        if top_k > 0:
+            gen_config_kwargs["top_k"] = top_k
+        if top_p < 1.0:
+            gen_config_kwargs["top_p"] = top_p
+    if eos_token_id is not None:
+        gen_config_kwargs["eos_token_id"] = eos_token_id
+    if pad_token_id is not None:
+        gen_config_kwargs["pad_token_id"] = pad_token_id
 
+    gen_config = GenerationConfig(**gen_config_kwargs)
+
+    gen_kwargs = {"input_ids": input_ids, "generation_config": gen_config}
     if attention_mask is not None:
         gen_kwargs["attention_mask"] = attention_mask
-    if do_sample:
-        gen_kwargs["temperature"] = temperature
-        if top_k > 0:
-            gen_kwargs["top_k"] = top_k
-        if top_p < 1.0:
-            gen_kwargs["top_p"] = top_p
-    if eos_token_id is not None:
-        gen_kwargs["eos_token_id"] = eos_token_id
-    if pad_token_id is not None:
-        gen_kwargs["pad_token_id"] = pad_token_id
 
     outputs = raw_model.generate(**gen_kwargs)
 
