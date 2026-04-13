@@ -212,6 +212,7 @@ def run_training(cfg: OPDConfig):
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
 
     # ---- 2. Student Model ----
     dtype = torch.bfloat16 if cfg.bf16 else torch.float16
