@@ -177,7 +177,11 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
         return enc
 
     tokenize_fn = tokenize_sft if is_sft else tokenize_text
-    num_workers = min(os.cpu_count() or 1, 32)
+    cpu_count = os.cpu_count() or 1
+    max_workers = 8 if world_size > 1 else 32
+    num_workers = min(cpu_count, max_workers)
+    if rank == 0:
+        print(f"  [FlashOPD] Tokenizing with num_proc={num_workers} ...")
     ds = ds.map(tokenize_fn, remove_columns=ds.column_names, num_proc=num_workers)
 
     if cache_path:
