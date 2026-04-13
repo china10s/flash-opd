@@ -65,6 +65,17 @@ def _load_json_or_jsonl(path: str) -> Dataset:
     return Dataset.from_generator(_gen)
 
 
+def _get_cache_path(cfg: OPDConfig) -> str | None:
+    """Generate a deterministic cache path based on data file and config."""
+    if not cfg.cache_dir:
+        return None
+    import hashlib
+    key = f"{cfg.data_path}|{cfg.max_seq_length}"
+    h = hashlib.md5(key.encode()).hexdigest()[:12]
+    name = os.path.basename(cfg.data_path).rsplit(".", 1)[0]
+    return os.path.join(cfg.cache_dir, f"{name}_{h}")
+
+
 def prepare_dataset(cfg: OPDConfig, tokenizer):
     """加载并 tokenize 数据.
 
@@ -74,7 +85,19 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
 
     SFT 格式会生成 labels，prompt 部分标记为 -100（不计算 CE loss），
     同时记录 prompt_length 供 OPD rollout 使用。
+
+    设置 cache_dir 后，tokenize 结果会缓存到磁盘，下次直接加载（秒级）。
     """
+    cache_path = _get_cache_path(cfg)
+    rank = int(os.getenv("RANK", "0"))
+
+    if cache_path and os.path.isdir(cache_path):
+        if rank == 0:
+            print(f"  [FlashOPD] Loading cached dataset from {cache_path}")
+        ds = Dataset.load_from_disk(cache_path)
+        ds.set_format("torch")
+        return ds
+
     if cfg.data_path.endswith((".jsonl", ".json")):
         ds = _load_json_or_jsonl(cfg.data_path)
     else:
@@ -131,6 +154,12 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     tokenize_fn = tokenize_sft if is_sft else tokenize_text
     num_workers = min(os.cpu_count() or 1, 32)
     ds = ds.map(tokenize_fn, remove_columns=ds.column_names, num_proc=num_workers)
+
+    if cache_path:
+        ds.save_to_disk(cache_path)
+        if rank == 0:
+            print(f"  [FlashOPD] Dataset cached to {cache_path}")
+
     ds.set_format("torch")
     return ds
 

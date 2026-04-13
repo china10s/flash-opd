@@ -74,6 +74,7 @@ class OPDConfig:
     # ---- 数据 ----
     data_path: str = ""
     max_seq_length: int = 4096
+    cache_dir: str = ""  # tokenize 后的缓存目录，留空不缓存
 
     # ---- LoRA（可选）----
     use_lora: bool = False
