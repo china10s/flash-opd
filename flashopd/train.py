@@ -129,7 +129,8 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
         return enc
 
     tokenize_fn = tokenize_sft if is_sft else tokenize_text
-    ds = ds.map(tokenize_fn, remove_columns=ds.column_names)
+    num_workers = min(os.cpu_count() or 1, 32)
+    ds = ds.map(tokenize_fn, remove_columns=ds.column_names, num_proc=num_workers)
     ds.set_format("torch")
     return ds
 
