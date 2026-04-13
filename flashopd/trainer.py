@@ -189,6 +189,9 @@ class OPDTrainer(Trainer):
         model.train()
         student_out = model(input_ids=full_ids, attention_mask=torch.ones_like(full_ids))
         student_logits = student_out.logits[:, -rollout_len - 1 : -1, :]
+
+        if not self.teacher.is_api:
+            teacher_logits = teacher_logits.to(student_logits.device)
         self._step_times["student_fwd_ms"] = (time.perf_counter() - t_student) * 1000
 
         # ---- Step 4: KL Loss ----
