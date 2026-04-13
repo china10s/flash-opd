@@ -86,18 +86,38 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     SFT 格式会生成 labels，prompt 部分标记为 -100（不计算 CE loss），
     同时记录 prompt_length 供 OPD rollout 使用。
 
-    设置 cache_dir 后，tokenize 结果会缓存到磁盘，下次直接加载（秒级）。
+    DDP 模式下只有 rank 0 处理数据并缓存，其他 rank 等待后从缓存加载。
     """
-    cache_path = _get_cache_path(cfg)
+    import torch.distributed as dist
+
     rank = int(os.getenv("RANK", "0"))
+    world_size = int(os.getenv("WORLD_SIZE", "1"))
+
+    cache_path = _get_cache_path(cfg)
+    if not cache_path and world_size > 1:
+        import hashlib
+        key = f"{cfg.data_path}|{cfg.max_seq_length}"
+        h = hashlib.md5(key.encode()).hexdigest()[:12]
+        name = os.path.basename(cfg.data_path).rsplit(".", 1)[0]
+        cache_path = os.path.join(cfg.output_dir, f".cache_{name}_{h}")
 
     if cache_path and os.path.isdir(cache_path):
         if rank == 0:
             print(f"  [FlashOPD] Loading cached dataset from {cache_path}")
+        if world_size > 1 and dist.is_initialized():
+            dist.barrier()
         ds = Dataset.load_from_disk(cache_path)
         ds.set_format("torch")
         return ds
 
+    if world_size > 1 and rank != 0:
+        if dist.is_initialized():
+            dist.barrier()
+        ds = Dataset.load_from_disk(cache_path)
+        ds.set_format("torch")
+        return ds
+
+    # Only rank 0 (or single-process) reaches here
     if cfg.data_path.endswith((".jsonl", ".json")):
         ds = _load_json_or_jsonl(cfg.data_path)
     else:
@@ -156,9 +176,12 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     ds = ds.map(tokenize_fn, remove_columns=ds.column_names, num_proc=num_workers)
 
     if cache_path:
+        os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
         ds.save_to_disk(cache_path)
-        if rank == 0:
-            print(f"  [FlashOPD] Dataset cached to {cache_path}")
+        print(f"  [FlashOPD] Dataset cached to {cache_path}")
+
+    if world_size > 1 and dist.is_initialized():
+        dist.barrier()
 
     ds.set_format("torch")
     return ds
