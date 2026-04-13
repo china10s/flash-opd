@@ -4,10 +4,11 @@ CleanRL 哲学：所有逻辑可见、可 copy-paste、可 hack。
 """
 from __future__ import annotations
 
+import json
 import os
 
 import torch
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -42,6 +43,17 @@ def build_prompt(instruction: str, input_text: str = "") -> str:
     return instruction
 
 
+def _load_jsonl(path: str) -> Dataset:
+    """Line-by-line JSONL loader — no PyArrow int32 block_size limit."""
+    def _gen():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+    return Dataset.from_generator(_gen)
+
+
 def prepare_dataset(cfg: OPDConfig, tokenizer):
     """加载并 tokenize 数据.
 
@@ -53,10 +65,7 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     同时记录 prompt_length 供 OPD rollout 使用。
     """
     if cfg.data_path.endswith((".jsonl", ".json")):
-        ds = load_dataset(
-            "json", data_files=cfg.data_path, split="train",
-            chunksize=10 << 20,  # 10MB chunks, avoids int32 overflow on large files
-        )
+        ds = _load_jsonl(cfg.data_path)
     else:
         ds = load_dataset(cfg.data_path, split="train")
 
