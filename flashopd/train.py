@@ -87,8 +87,9 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     同时记录 prompt_length 供 OPD rollout 使用。
 
     DDP 模式下只有 rank 0 处理数据并缓存，其他 rank 等待后从缓存加载。
+    使用文件标记(.done)同步，不依赖 dist.barrier()（此时 Trainer 尚未初始化）。
     """
-    import torch.distributed as dist
+    import time
 
     rank = int(os.getenv("RANK", "0"))
     world_size = int(os.getenv("WORLD_SIZE", "1"))
@@ -101,18 +102,22 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
         name = os.path.basename(cfg.data_path).rsplit(".", 1)[0]
         cache_path = os.path.join(cfg.output_dir, f".cache_{name}_{h}")
 
-    if cache_path and os.path.isdir(cache_path):
+    done_marker = f"{cache_path}.done" if cache_path else None
+
+    if cache_path and os.path.isdir(cache_path) and (
+        world_size == 1 or (done_marker and os.path.exists(done_marker))
+    ):
         if rank == 0:
             print(f"  [FlashOPD] Loading cached dataset from {cache_path}")
-        if world_size > 1 and dist.is_initialized():
-            dist.barrier()
         ds = Dataset.load_from_disk(cache_path)
         ds.set_format("torch")
         return ds
 
     if world_size > 1 and rank != 0:
-        if dist.is_initialized():
-            dist.barrier()
+        print(f"  [Rank {rank}] Waiting for rank 0 to prepare dataset...")
+        while not (done_marker and os.path.exists(done_marker)):
+            time.sleep(2)
+        print(f"  [Rank {rank}] Loading cached dataset from {cache_path}")
         ds = Dataset.load_from_disk(cache_path)
         ds.set_format("torch")
         return ds
@@ -178,10 +183,9 @@ def prepare_dataset(cfg: OPDConfig, tokenizer):
     if cache_path:
         os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
         ds.save_to_disk(cache_path)
+        with open(done_marker, "w") as f:
+            f.write("done")
         print(f"  [FlashOPD] Dataset cached to {cache_path}")
-
-    if world_size > 1 and dist.is_initialized():
-        dist.barrier()
 
     ds.set_format("torch")
     return ds
