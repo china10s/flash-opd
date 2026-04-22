@@ -28,6 +28,20 @@ class TeacherBackend(abc.ABC):
             top_logprobs: (B, rollout_len, K)
         """
 
+    def get_think_then_score_logprobs(
+        self,
+        prompt_ids: torch.Tensor,
+        rollout_ids: torch.Tensor,
+        tokenizer,
+        think_cfg: dict,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Think-then-Score: teacher 先思考再评分.
+
+        子类可覆盖，默认 fallback 到 get_sparse_logprobs.
+        """
+        full_ids = torch.cat([prompt_ids, rollout_ids], dim=1)
+        return self.get_sparse_logprobs(full_ids, rollout_ids.shape[1])
+
     @property
     @abc.abstractmethod
     def is_api(self) -> bool:
@@ -152,56 +166,155 @@ class APITeacher(TeacherBackend):
     ) -> torch.Tensor:
         raise NotImplementedError("API 模式不返回完整 logits，请使用 get_sparse_logprobs")
 
+    def _score_with_prompt_logprobs(
+        self, token_ids: list[int], rollout_len: int, K: int
+    ) -> Tuple[list, list]:
+        """Send token_ids to API with prompt_logprobs, extract rollout portion."""
+        import requests
+
+        payload = {
+            "model": self.model_name,
+            "prompt": token_ids,
+            "max_tokens": 1,
+            "prompt_logprobs": K,
+        }
+        resp = requests.post(
+            f"{self.api_url}/v1/completions", json=payload, timeout=self.timeout
+        )
+        resp.raise_for_status()
+        result = resp.json()
+
+        plp = (
+            result.get("choices", [{}])[0].get("prompt_logprobs")
+            or result.get("prompt_logprobs")
+            or []
+        )
+
+        start = max(0, len(token_ids) - rollout_len)
+        b_ids, b_lps = [], []
+
+        for pos in range(start, len(token_ids)):
+            if pos < len(plp) and plp[pos] is not None:
+                t_ids, t_lps = _parse_logprob_entry(plp[pos], K)
+            else:
+                t_ids, t_lps = [0] * K, [-100.0] * K
+            b_ids.append(t_ids)
+            b_lps.append(t_lps)
+
+        pad_ids, pad_lps = [0] * K, [-100.0] * K
+        while len(b_ids) < rollout_len:
+            b_ids.append(pad_ids)
+            b_lps.append(pad_lps)
+        return b_ids[:rollout_len], b_lps[:rollout_len]
+
     def get_sparse_logprobs(
         self, input_ids: torch.Tensor, rollout_len: int
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        import requests
-
-        B, S = input_ids.shape
+        B = input_ids.shape[0]
         K = self.top_k
         device = input_ids.device
 
         all_ids, all_lps = [], []
-
         for b in range(B):
             ids = [t for t in input_ids[b].tolist() if t != self.pad_token_id]
-            payload = {
+            b_ids, b_lps = self._score_with_prompt_logprobs(ids, rollout_len, K)
+            all_ids.append(b_ids)
+            all_lps.append(b_lps)
+
+        return (
+            torch.tensor(all_ids, dtype=torch.long, device=device),
+            torch.tensor(all_lps, dtype=torch.float32, device=device),
+        )
+
+    def get_think_then_score_logprobs(
+        self,
+        prompt_ids: torch.Tensor,
+        rollout_ids: torch.Tensor,
+        tokenizer,
+        think_cfg: dict,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Think-then-Score: 两阶段 API 调用.
+
+        Pass 1: teacher 对 prompt 生成 <think>...</think> 思考过程
+        Pass 2: [prompt + think + student_rollout] → prompt_logprobs 对 rollout 打分
+        """
+        import requests
+
+        B = prompt_ids.shape[0]
+        rollout_len = rollout_ids.shape[1]
+        K = self.top_k
+        device = prompt_ids.device
+
+        think_max = think_cfg.get("max_tokens", 1024)
+        think_temp = think_cfg.get("temperature", 0.7)
+        think_top_p = think_cfg.get("top_p", 0.6)
+        think_top_k = think_cfg.get("top_k", 20)
+        think_timeout = min(think_max // 5 + 60, 480)
+
+        all_ids, all_lps = [], []
+        rank = int(os.getenv("RANK", "0"))
+
+        for b in range(B):
+            p_ids = [t for t in prompt_ids[b].tolist() if t != self.pad_token_id]
+            r_ids = rollout_ids[b].tolist()
+
+            # Pass 1: teacher 生成思考过程
+            gen_payload = {
                 "model": self.model_name,
-                "prompt": ids,
-                "max_tokens": 1,
-                "prompt_logprobs": K,
+                "prompt": p_ids,
+                "max_tokens": think_max,
+                "temperature": think_temp,
+                "top_p": think_top_p,
+                "top_k": think_top_k,
+                "repetition_penalty": 1.05,
+                "stop": ["</think>"],
             }
-            resp = requests.post(
-                f"{self.api_url}/v1/completions", json=payload, timeout=self.timeout
-            )
-            resp.raise_for_status()
-            result = resp.json()
+            try:
+                gen_resp = requests.post(
+                    f"{self.api_url}/v1/completions",
+                    json=gen_payload,
+                    timeout=think_timeout,
+                )
+                gen_resp.raise_for_status()
+                think_text = gen_resp.json().get("choices", [{}])[0].get("text", "")
+            except Exception as e:
+                if rank == 0:
+                    print(f"[FlashOPD] Think API failed ({type(e).__name__}), fallback")
+                all_ids.append([[0] * K] * rollout_len)
+                all_lps.append([[-100.0] * K] * rollout_len)
+                continue
 
-            plp = (
-                result.get("choices", [{}])[0].get("prompt_logprobs")
-                or result.get("prompt_logprobs")
-                or []
-            )
+            think_token_ids = tokenizer.encode(think_text, add_special_tokens=False)
+            end_think_ids = tokenizer.encode("</think>", add_special_tokens=False)
+            think_token_ids = think_token_ids + end_think_ids
 
-            start = max(0, len(ids) - rollout_len)
-            b_ids, b_lps = [], []
+            # Pass 2: [prompt + think + student_rollout] → prompt_logprobs
+            full_ids = p_ids + think_token_ids + r_ids
 
-            for pos in range(start, len(ids)):
-                if pos < len(plp) and plp[pos] is not None:
-                    pos_data = plp[pos]
-                    t_ids, t_lps = _parse_logprob_entry(pos_data, K)
-                else:
-                    t_ids, t_lps = [0] * K, [-100.0] * K
+            if not hasattr(self, "_debug_think_printed"):
+                self._debug_think_printed = False
+            if not self._debug_think_printed and rank == 0:
+                self._debug_think_printed = True
+                print(
+                    f"\n{'=' * 60}\n"
+                    f"[FlashOPD] Think-then-Score (first sample)\n"
+                    f"  prompt: {len(p_ids)} tokens\n"
+                    f"  think:  {len(think_token_ids)} tokens\n"
+                    f"  rollout: {len(r_ids)} tokens\n"
+                    f"  total:  {len(full_ids)} tokens\n"
+                    f"  think preview: {think_text[:300]}\n"
+                    f"{'=' * 60}"
+                )
 
-                b_ids.append(t_ids)
-                b_lps.append(t_lps)
-
-            pad_entry_ids, pad_entry_lps = [0] * K, [-100.0] * K
-            while len(b_ids) < rollout_len:
-                b_ids.append(pad_entry_ids)
-                b_lps.append(pad_entry_lps)
-            b_ids = b_ids[:rollout_len]
-            b_lps = b_lps[:rollout_len]
+            try:
+                b_ids, b_lps = self._score_with_prompt_logprobs(
+                    full_ids, rollout_len, K
+                )
+            except Exception as e:
+                if rank == 0:
+                    print(f"[FlashOPD] Score API failed ({type(e).__name__}), fallback")
+                b_ids = [[0] * K] * rollout_len
+                b_lps = [[-100.0] * K] * rollout_len
 
             all_ids.append(b_ids)
             all_lps.append(b_lps)

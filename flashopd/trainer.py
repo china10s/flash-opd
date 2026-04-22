@@ -185,7 +185,17 @@ class OPDTrainer(Trainer):
 
         # ---- Step 2: Teacher Forward ----
         t_teacher = time.perf_counter()
-        if self.teacher.is_api:
+        if self.teacher.is_api and cfg.teacher_think:
+            think_cfg = {
+                "max_tokens": cfg.teacher_think_max_tokens,
+                "temperature": cfg.teacher_think_temperature,
+                "top_p": cfg.teacher_think_top_p,
+                "top_k": cfg.teacher_think_top_k,
+            }
+            teacher_top_ids, teacher_top_lps = self.teacher.get_think_then_score_logprobs(
+                prompt_ids, gen_ids, tokenizer, think_cfg
+            )
+        elif self.teacher.is_api:
             teacher_top_ids, teacher_top_lps = self.teacher.get_sparse_logprobs(
                 full_ids, rollout_len
             )
@@ -263,6 +273,9 @@ class _OPDProgressCallback(TrainerCallback):
         cfg = self._trainer.opd_cfg
         rank = int(os.getenv("RANK", "0"))
         if rank == 0:
+            teacher_label = "Local"
+            if cfg.teacher_backend == "api":
+                teacher_label = "API+Think" if cfg.teacher_think else "API"
             print(
                 f"\n{'=' * 60}\n"
                 f"  FlashOPD v0.1 — On-Policy Distillation\n"
@@ -271,7 +284,7 @@ class _OPDProgressCallback(TrainerCallback):
                 f"  Balance: {cfg.loss_balance}\n"
                 f"  Rollout: max_new_tokens={cfg.max_new_tokens}"
                 f"  top_k={cfg.rollout_top_k} top_p={cfg.rollout_top_p}\n"
-                f"  Teacher: {'API' if cfg.teacher_backend == 'api' else 'Local'}\n"
+                f"  Teacher: {teacher_label}\n"
                 f"  Disable after: {cfg.disable_after_ratio:.0%}\n"
                 f"{'=' * 60}\n"
             )

@@ -48,6 +48,13 @@ class OPDConfig:
     teacher_api_model: str = "default"
     teacher_api_logprobs: int = 20  # vLLM 默认上限为 20，需启动时 --max-logprobs N 提高
 
+    # ---- Think-then-Score ----
+    teacher_think: bool = False       # teacher 先生成 <think>...</think>，再带着思考评分 student rollout
+    teacher_think_max_tokens: int = 1024  # 思考过程最大 token 数
+    teacher_think_temperature: float = 0.7
+    teacher_think_top_p: float = 0.6
+    teacher_think_top_k: int = 20
+
     # ---- 训练超参 ----
     learning_rate: float = 5e-6
     num_epochs: int = 3
